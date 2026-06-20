@@ -44,6 +44,7 @@ function createBot(id, attempt = 0) {
     console.log(`${username} spawned`);
 
     setTimeout(() => {
+      bot.chat(`/register ${PASSWORD}`);
       bot.chat(`/register ${PASSWORD} ${PASSWORD}`);
       bot.chat(`/login ${PASSWORD}`);
     }, 2000);
