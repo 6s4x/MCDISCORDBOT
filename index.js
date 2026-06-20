@@ -2,30 +2,17 @@ const mineflayer = require("mineflayer");
 const { Client, GatewayIntentBits } = require("discord.js");
 const express = require("express");
 
-// ─────────────────────────────
-// FLY REQUIRED HTTP SERVER
-// ─────────────────────────────
 const app = express();
-app.get("/", (req, res) => res.send("OK"));
-app.listen(process.env.PORT || 8080, () => {
-  console.log("HTTP server running");
-});
+app.get("/", (req, res) => res.send("MC BOT PANEL ONLINE"));
+app.listen(process.env.PORT || 8080);
 
-// ─────────────────────────────
-// CONFIG
-// ─────────────────────────────
 const SERVER = {
   host: "89.144.248.248",
   port: 1033
 };
 
-const PASSWORD = "#gxEcv#6dAz";
-
 let bot = null;
 
-// ─────────────────────────────
-// MINECRAFT BOT
-// ─────────────────────────────
 function startBot() {
   if (bot) return;
 
@@ -34,45 +21,35 @@ function startBot() {
   bot = mineflayer.createBot({
     host: SERVER.host,
     port: SERVER.port,
-    username: `flybot_${Math.floor(Math.random() * 9999)}`,
-    version: false
+    username: `rentacraft_${Math.floor(Math.random() * 9999)}`,
+    version: "1.21.5"
   });
 
-  bot.once("spawn", () => {
-    console.log("MC bot spawned");
+  bot.on("login", () => console.log("LOGIN"));
+  bot.on("spawn", () => console.log("SPAWN"));
 
-    setTimeout(() => {
-      try {
-        bot.chat(`/register ${PASSWORD} ${PASSWORD}`);
-        bot.chat(`/login ${PASSWORD}`);
-      } catch (e) {
-        console.log("Auth error:", e.message);
-      }
-    }, 3000);
-  });
-
-  bot.on("chat", (username, message) => {
-    const channel = client.channels.cache.find(c => c.name === "mc-chat");
-    if (channel) {
-      channel.send(`**${username}:** ${message}`);
-    }
-  });
-
-  bot.on("end", () => {
-    console.log("MC bot disconnected");
+  bot.on("kicked", (r) => {
+    console.log("KICKED:", r);
     bot = null;
-
     setTimeout(startBot, 5000);
   });
 
-  bot.on("error", (err) => {
-    console.log("MC bot error:", err.message);
+  bot.on("end", () => {
+    console.log("DISCONNECTED");
+    bot = null;
+    setTimeout(startBot, 5000);
+  });
+
+  bot.on("error", (e) => {
+    console.log("ERROR:", e.message);
+  });
+
+  bot.on("chat", (u, m) => {
+    console.log(`<${u}> ${m}`);
   });
 }
 
-// ─────────────────────────────
-// DISCORD BOT
-// ─────────────────────────────
+// ───────── DISCORD ─────────
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
@@ -82,32 +59,30 @@ const client = new Client({
 });
 
 client.once("ready", () => {
-  console.log(`Discord logged in as ${client.user.tag}`);
-
-  startBot();
+  console.log("Discord ready");
 });
 
 client.on("messageCreate", (msg) => {
   if (msg.author.bot) return;
 
-  // send chat to MC
-  if (msg.content.startsWith("!mc chat ")) {
-    if (!bot) return msg.reply("bot offline");
-
-    const text = msg.content.slice(9);
-    bot.chat(text);
-
-    return msg.reply("sent");
+  if (msg.content === "!start") {
+    startBot();
+    msg.reply("starting bot");
   }
 
-  // restart bot
-  if (msg.content === "!mc restart") {
+  if (msg.content === "!stop") {
     if (bot) bot.end();
     bot = null;
+    msg.reply("stopped");
+  }
 
-    startBot();
+  if (msg.content.startsWith("!chat ")) {
+    if (!bot) return msg.reply("bot offline");
+    bot.chat(msg.content.slice(6));
+  }
 
-    return msg.reply("restarting bot");
+  if (msg.content === "!status") {
+    msg.reply(bot ? "online" : "offline");
   }
 });
 
