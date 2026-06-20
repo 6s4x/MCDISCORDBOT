@@ -1,14 +1,12 @@
 {
-  "name": "mc-prismarine-panel",
+  "name": "mc-bot",
   "version": "1.0.0",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
   },
   "dependencies": {
-    "discord.js": "^14.22.1",
-    "minecraft-protocol": "^1.47.0",
-    "prismarine-auth": "^2.5.0",
-    "minecraft-data": "^3.76.0"
+    "mineflayer": "^4.26.0",
+    "discord.js": "^14.22.1"
   }
 }
