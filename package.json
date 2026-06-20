@@ -1,5 +1,5 @@
 {
-  "name": "mc-discord-control-panel",
+  "name": "mc-prismarine-panel",
   "version": "1.0.0",
   "main": "index.js",
   "scripts": {
@@ -7,6 +7,8 @@
   },
   "dependencies": {
     "discord.js": "^14.22.1",
-    "minecraft-protocol": "^1.47.0"
+    "minecraft-protocol": "^1.47.0",
+    "prismarine-auth": "^2.5.0",
+    "minecraft-data": "^3.76.0"
   }
 }
