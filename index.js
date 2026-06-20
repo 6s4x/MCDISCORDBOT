@@ -1,79 +1,110 @@
+const mineflayer = require('mineflayer');
 const { Client, GatewayIntentBits } = require('discord.js');
-const { spawn } = require('child_process');
 
 const client = new Client({
-    intents: [
-        GatewayIntentBits.Guilds,
-        GatewayIntentBits.GuildMessages,
-        GatewayIntentBits.MessageContent
-    ]
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.MessageContent
+  ]
 });
 
-let mcc = null;
+const bots = [];
+const MAX_BOTS = 5;
 
-function startMCC() {
-    if (mcc) return;
+const SERVER = {
+  host: '89.144.32.248',
+  port: 1033
+};
 
-    const fs = require('fs');
+const PASSWORD = '#gxEcv#6dAz';
 
-    try {
-        fs.chmodSync('./MinecraftClient', 0o755);
-    } catch {}
+function createBot(id) {
+  const bot = mineflayer.createBot({
+    host: SERVER.host,
+    port: SERVER.port,
+    username: `rentacraftX${id}`
+  });
 
-    mcc = require('child_process').spawn('bash', ['./MinecraftClient']);
+  bot.on('spawn', () => {
+    console.log(`${bot.username} spawned`);
 
-    mcc.stdout.on('data', d => console.log('[MCC]', d.toString()));
-    mcc.stderr.on('data', d => console.log('[MCC ERR]', d.toString()));
+    setTimeout(() => {
+      bot.chat(`/register ${PASSWORD}`);
+      bot.chat(`/register ${PASSWORD} ${PASSWORD}`);
+      bot.chat(`/login ${PASSWORD}`);
+    }, 2000);
+  });
 
-    mcc.on('close', c => {
-        console.log('MCC closed:', c);
-        mcc = null;
-        setTimeout(startMCC, 5000);
-    });
+  bot.on('kicked', (reason) => console.log(`${bot.username} kicked:`, reason));
+  bot.on('error', (err) => console.log(`${bot.username} error:`, err));
+
+  return bot;
+}
+
+function startBots(amount) {
+  const count = Math.min(amount, MAX_BOTS);
+
+  bots.length = 0;
+
+  for (let i = 0; i < count; i++) {
+    const bot = createBot(i);
+    bots.push(bot);
+  }
+
+  return count;
+}
+
+function broadcast(message) {
+  for (const bot of bots) {
+    if (bot && bot.chat) {
+      bot.chat(message);
+    }
+  }
 }
 
 client.once('ready', () => {
-
-    console.log(`Logged in as ${client.user.tag}`);
-
+  console.log(`Logged in as ${client.user.tag}`);
 });
 
-client.on('messageCreate', async message => {
+client.on('messageCreate', async (msg) => {
+  if (msg.author.bot) return;
 
-    if (message.author.bot) return;
+  const content = msg.content;
 
-    if (message.content === '!mc start') {
+  // START BOTS
+  if (content.startsWith('!mc start')) {
+    const parts = content.split(' ');
+    const amount = parseInt(parts[2] || '1');
 
-        if (mcc)
-            return message.reply('Already running.');
+    const started = startBots(amount);
 
-        startMCC();
+    return msg.reply(`Started ${started} bots.`);
+  }
 
-        return message.reply('Started MCC.');
+  // CHAT BROADCAST
+  if (content.startsWith('!mc chat ')) {
+    const text = content.slice(10);
+
+    if (bots.length === 0) {
+      return msg.reply('No bots running.');
     }
 
-    if (message.content === '!mc stop') {
+    broadcast(text);
 
-        if (!mcc)
-            return message.reply('Not running.');
+    return msg.reply('Sent to all bots.');
+  }
 
-        mcc.stdin.write('/quit\n');
-
-        return message.reply('Stopping MCC.');
+  // STOP ALL BOTS
+  if (content === '!mc stop') {
+    for (const bot of bots) {
+      if (bot) bot.end();
     }
 
-    if (message.content.startsWith('!mc send ')) {
+    bots.length = 0;
 
-        if (!mcc)
-            return message.reply('MCC is not running.');
-
-        const cmd = message.content.slice(9);
-
-        mcc.stdin.write(cmd + '\n');
-
-        return message.reply(`Sent: ${cmd}`);
-    }
-
+    return msg.reply('Stopped all bots.');
+  }
 });
 
 client.login(process.env.TOKEN);
