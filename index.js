@@ -16,24 +16,13 @@ const SERVER = {
 
 const PASSWORD = '#gxEcv#6dAz';
 
-const bots = new Map(); // id -> bot
-const status = new Map(); // id -> status
-
-const JOIN_DELAY = 7000; // IMPORTANT: prevents throttling
+const TARGET_BOTS = new Map();   // desired count
+const ACTIVE_BOTS = new Map();   // running bots
 
 // ─────────────────────────────
-// UTIL
-// ─────────────────────────────
-function sleep(ms) {
-  return new Promise(r => setTimeout(r, ms));
-}
-
-// ─────────────────────────────
-// CREATE SINGLE BOT
+// CREATE BOT (SAFE JOIN)
 // ─────────────────────────────
 function createBot(id) {
-  if (bots.has(id)) return;
-
   const bot = mineflayer.createBot({
     host: SERVER.host,
     port: SERVER.port,
@@ -41,56 +30,43 @@ function createBot(id) {
     version: false
   });
 
-  bots.set(id, bot);
-  status.set(id, 'connecting');
+  ACTIVE_BOTS.set(id, bot);
 
   bot.once('login', () => {
-    status.set(id, 'online');
-    console.log(`rentacraftX${id} joined`);
+    console.log(`X${id} joined`);
 
     setTimeout(() => {
-      try {
-        bot.chat(`/register ${PASSWORD} ${PASSWORD}`);
-        bot.chat(`/login ${PASSWORD}`);
-      } catch {}
-    }, 3000);
+      bot.chat(`/register ${PASSWORD} ${PASSWORD}`);
+      bot.chat(`/login ${PASSWORD}`);
+    }, 2500);
   });
 
-  bot.on('end', () => {
-    console.log(`rentacraftX${id} left`);
-    bots.delete(id);
-    status.set(id, 'offline');
-  });
-
-  bot.on('error', (err) => {
-    console.log(`rentacraftX${id} error`, err.message);
-    bots.delete(id);
-    status.set(id, 'offline');
-  });
+  bot.on('end', () => handleDeath(id));
+  bot.on('error', () => handleDeath(id));
 }
 
 // ─────────────────────────────
-// START SWARM (SAFE STAGGER)
+// AUTO REPLACE DEAD BOT
 // ─────────────────────────────
-async function startSwarm(amount) {
-  amount = Math.min(amount, 20); // safety cap
+function handleDeath(id) {
+  ACTIVE_BOTS.delete(id);
 
-  console.log(`Starting swarm: ${amount} bots`);
-
-  for (let i = 0; i < amount; i++) {
-    createBot(i);
-    await sleep(JOIN_DELAY); // 🔥 THIS FIXES THROTTLING
+  if (TARGET_BOTS.has(id)) {
+    // respawn instantly BUT only ONE at a time
+    setTimeout(() => createBot(id), 2000);
   }
 }
 
 // ─────────────────────────────
-// CHAT ALL BOTS
+// SWARM CONTROLLER
 // ─────────────────────────────
-function broadcast(message) {
-  for (const bot of bots.values()) {
-    try {
-      bot.chat(message);
-    } catch {}
+function setSwarmSize(size) {
+  for (let i = 0; i < size; i++) {
+    TARGET_BOTS.set(i, true);
+
+    if (!ACTIVE_BOTS.has(i)) {
+      setTimeout(() => createBot(i), i * 1500); // controlled stagger
+    }
   }
 }
 
@@ -98,47 +74,33 @@ function broadcast(message) {
 // DISCORD
 // ─────────────────────────────
 client.once('ready', () => {
-  console.log('Discord bot ready');
+  console.log('ready');
 });
 
-client.on('messageCreate', async (msg) => {
+client.on('messageCreate', msg => {
   if (msg.author.bot) return;
 
-  // START SWARM
   if (msg.content.startsWith('!mc start')) {
-    const parts = msg.content.split(' ');
-    const amount = parseInt(parts[2] || '1');
+    const n = parseInt(msg.content.split(' ')[2] || '3');
 
-    await startSwarm(amount);
-    return msg.reply(`starting ${amount} bots`);
+    setSwarmSize(n);
+    return msg.reply(`swarm set to ${n}`);
   }
 
-  // CHAT ALL
+  if (msg.content === '!mc status') {
+    return msg.reply(
+      `online: ${ACTIVE_BOTS.size} / target: ${TARGET_BOTS.size}`
+    );
+  }
+
   if (msg.content.startsWith('!mc chat ')) {
     const text = msg.content.slice(9);
-    broadcast(text);
-    return msg.reply('sent');
-  }
 
-  // STATUS
-  if (msg.content === '!mc status') {
-    const lines = [...status.entries()]
-      .map(([id, s]) => `X${id}: ${s}`)
-      .join('\n') || 'no bots';
-
-    return msg.reply('```\n' + lines + '\n```');
-  }
-
-  // STOP ALL
-  if (msg.content === '!mc stop') {
-    for (const bot of bots.values()) {
-      try { bot.end(); } catch {}
+    for (const bot of ACTIVE_BOTS.values()) {
+      try { bot.chat(text); } catch {}
     }
 
-    bots.clear();
-    status.clear();
-
-    return msg.reply('stopped all bots');
+    return msg.reply('sent');
   }
 });
 
