@@ -1,6 +1,13 @@
 const mineflayer = require('mineflayer');
 const { Client, GatewayIntentBits } = require('discord.js');
+const http = require('http');
 
+// ───────── FLY REQUIRED DUMMY SERVER ─────────
+http.createServer((req, res) => {
+  res.end("ok");
+}).listen(8080);
+
+// ───────── CONFIG ─────────
 const SERVER = {
   host: '89.144.248.248',
   port: 1033
@@ -22,26 +29,23 @@ function startBot() {
   });
 
   bot.once('login', () => {
-    console.log('MC bot joined');
+    console.log('[MC] Joined');
 
     setTimeout(() => {
-      bot.chat(`/register ${PASSWORD}`);
       bot.chat(`/register ${PASSWORD} ${PASSWORD}`);
       bot.chat(`/login ${PASSWORD}`);
     }, 2500);
   });
 
   bot.on('end', () => {
-    console.log('MC bot disconnected');
+    console.log('[MC] Disconnected');
     bot = null;
-
-    setTimeout(startBot, 5000); // safe reconnect
+    setTimeout(startBot, 5000);
   });
 
   bot.on('error', (err) => {
-    console.log('MC bot error:', err.message);
+    console.log('[MC] Error:', err.message);
     bot = null;
-
     setTimeout(startBot, 5000);
   });
 }
@@ -56,7 +60,7 @@ const client = new Client({
 });
 
 client.once('ready', () => {
-  console.log('Discord ready');
+  console.log('[DISCORD] Ready');
   startBot();
 });
 
@@ -75,9 +79,8 @@ client.on('messageCreate', (msg) => {
   if (msg.content === '!mc restart') {
     if (bot) bot.end();
     bot = null;
-
     startBot();
-    return msg.reply('restarting bot');
+    return msg.reply('restarting');
   }
 });
 
