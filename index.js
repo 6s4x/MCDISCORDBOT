@@ -9,8 +9,7 @@ const client = new Client({
   ]
 });
 
-const bots = [];
-const MAX_BOTS = 5;
+const bots = new Map(); // id -> bot instance
 
 const SERVER = {
   host: '89.144.32.248',
@@ -18,51 +17,102 @@ const SERVER = {
 };
 
 const PASSWORD = '#gxEcv#6dAz';
+const MAX_BOTS = 6;
 
-function createBot(id) {
+// ─────────────────────────────────────────────
+// UTIL: backoff reconnect (no spam)
+// ─────────────────────────────────────────────
+function backoffTime(attempt) {
+  return Math.min(30000, 2000 * Math.pow(2, attempt));
+}
+
+// ─────────────────────────────────────────────
+// CREATE BOT
+// ─────────────────────────────────────────────
+function createBot(id, attempt = 0) {
+  const username = `rentacraftX${id}`;
+
   const bot = mineflayer.createBot({
     host: SERVER.host,
     port: SERVER.port,
-    username: `rentacraftX${id}`
+    username
   });
 
+  bots.set(id, { bot, attempt });
+
   bot.on('spawn', () => {
-    console.log(`${bot.username} spawned`);
+    console.log(`${username} spawned`);
 
     setTimeout(() => {
-      bot.chat(`/register ${PASSWORD}`);
       bot.chat(`/register ${PASSWORD} ${PASSWORD}`);
       bot.chat(`/login ${PASSWORD}`);
     }, 2000);
   });
 
-  bot.on('kicked', (reason) => console.log(`${bot.username} kicked:`, reason));
-  bot.on('error', (err) => console.log(`${bot.username} error:`, err));
+  // ───────────── Minecraft → Discord ─────────────
+  bot.on('chat', (username, message) => {
+    if (username === bot.username) return;
+
+    const channel = client.channels.cache.find(c => c?.name === 'mc-chat');
+    if (channel) channel.send(`⛏️ **${username}**: ${message}`);
+  });
+
+  // ───────────── ERROR HANDLING ─────────────
+  bot.on('kicked', (reason) => {
+    console.log(`${username} kicked:`, reason);
+  });
+
+  bot.on('error', (err) => {
+    console.log(`${username} error:`, err);
+  });
+
+  bot.on('end', () => {
+    console.log(`${username} disconnected`);
+
+    const data = bots.get(id);
+    const nextAttempt = (data?.attempt || 0) + 1;
+
+    const delay = backoffTime(nextAttempt);
+
+    console.log(`Reconnecting ${username} in ${delay}ms`);
+
+    setTimeout(() => {
+      createBot(id, nextAttempt);
+    }, delay);
+  });
 
   return bot;
 }
 
-function startBots(amount) {
+// ─────────────────────────────────────────────
+// START BOTS (NO QUEUE, BUT SAFE DELAY)
+// ─────────────────────────────────────────────
+async function startBots(amount) {
   const count = Math.min(amount, MAX_BOTS);
 
-  bots.length = 0;
+  bots.clear();
 
   for (let i = 0; i < count; i++) {
-    const bot = createBot(i);
-    bots.push(bot);
+    setTimeout(() => {
+      createBot(i);
+    }, i * 5000); // prevents throttling WITHOUT queue system
   }
 
   return count;
 }
 
+// ─────────────────────────────────────────────
+// BROADCAST
+// ─────────────────────────────────────────────
 function broadcast(message) {
-  for (const bot of bots) {
-    if (bot && bot.chat) {
-      bot.chat(message);
-    }
+  for (const { bot } of bots.values()) {
+    if (bot?.chat) bot.chat(message);
   }
 }
 
+// ─────────────────────────────────────────────
+// DISCORD BOT
+// ─────────────────────────────────────────────
 client.once('ready', () => {
   console.log(`Logged in as ${client.user.tag}`);
 });
@@ -70,40 +120,32 @@ client.once('ready', () => {
 client.on('messageCreate', async (msg) => {
   if (msg.author.bot) return;
 
-  const content = msg.content;
+  // START
+  if (msg.content.startsWith('!mc start')) {
+    const amount = parseInt(msg.content.split(' ')[2] || '1');
 
-  // START BOTS
-  if (content.startsWith('!mc start')) {
-    const parts = content.split(' ');
-    const amount = parseInt(parts[2] || '1');
-
-    const started = startBots(amount);
+    const started = await startBots(amount);
 
     return msg.reply(`Started ${started} bots.`);
   }
 
-  // CHAT BROADCAST
-  if (content.startsWith('!mc chat ')) {
-    const text = content.slice(10);
-
-    if (bots.length === 0) {
-      return msg.reply('No bots running.');
-    }
-
+  // CHAT → MC
+  if (msg.content.startsWith('!mc chat ')) {
+    const text = msg.content.slice(10);
     broadcast(text);
 
-    return msg.reply('Sent to all bots.');
+    return msg.reply('sent');
   }
 
-  // STOP ALL BOTS
-  if (content === '!mc stop') {
-    for (const bot of bots) {
-      if (bot) bot.end();
+  // STOP
+  if (msg.content === '!mc stop') {
+    for (const { bot } of bots.values()) {
+      try { bot.end(); } catch {}
     }
 
-    bots.length = 0;
+    bots.clear();
 
-    return msg.reply('Stopped all bots.');
+    return msg.reply('stopped all bots');
   }
 });
 
