@@ -1,8 +1,5 @@
 app = "mc-fly-bot"
 
-[build]
-  builder = "paketobuildpacks/builder:base"
-
 [env]
   NODE_ENV = "production"
 
