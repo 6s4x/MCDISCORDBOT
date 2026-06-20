@@ -15,7 +15,4 @@ app = "mc-fly-bot"
   internal_port = 8080
 
   [[services.ports]]
-    port = 80
-
-  [[services.ports]]
-    port = 443
+    port = 8080
