@@ -1,10 +1,13 @@
 app = "mcdiscordbot"
 
+[build]
+  builder = "heroku/buildpacks:20"
+
 [env]
   NODE_ENV = "production"
 
 [processes]
-  app = "node index.js"
+  app = "npm start"
 
 [[services]]
   processes = ["app"]
@@ -12,4 +15,4 @@ app = "mcdiscordbot"
   protocol = "tcp"
 
   [[services.ports]]
-    port = 8080
+    port = 80
