@@ -1,5 +1,12 @@
-const mineflayer = require('mineflayer');
-const { Client, GatewayIntentBits } = require('discord.js');
+const mc = require('minecraft-protocol');
+const {
+  Client,
+  GatewayIntentBits,
+  EmbedBuilder,
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle
+} = require('discord.js');
 
 const client = new Client({
   intents: [
@@ -9,6 +16,9 @@ const client = new Client({
   ]
 });
 
+// ─────────────────────────────
+// CONFIG
+// ─────────────────────────────
 const SERVER = {
   host: '89.144.32.248',
   port: 1033
@@ -17,149 +27,190 @@ const SERVER = {
 const PASSWORD = '#gxEcv#6dAz';
 const MAX_BOTS = 3;
 
-// STATE SYSTEM
-const botState = {
-  0: { bot: null, status: 'offline' },
-  1: { bot: null, status: 'offline' },
-  2: { bot: null, status: 'offline' }
-};
+// IMPORTANT: change this if server rejects 1.21.5
+let protocolVersion = '1.21.5';
 
 // ─────────────────────────────
-// CREATE BOT (STABLE VERSION)
+// STATE
+// ─────────────────────────────
+const bots = { 0: null, 1: null, 2: null };
+const status = { 0: 'offline', 1: 'offline', 2: 'offline' };
+
+// ─────────────────────────────
+// CREATE BOT (RAW PROTOCOL)
 // ─────────────────────────────
 function createBot(id) {
-  if (botState[id]?.bot && botState[id].status === 'online') return;
+  if (bots[id]) return;
 
-  const bot = mineflayer.createBot({
+  const username = `rentacraftX${id}_${Date.now()}`;
+
+  const bot = mc.createClient({
     host: SERVER.host,
     port: SERVER.port,
-    username: `rentacraftX${id}_${Date.now()}`,
-
-    // 🔥 CRITICAL FIX FOR 1.21.5
-    version: '1.21.5',
-    auth: 'offline',
-
-    checkTimeoutInterval: 60000,
-    keepAlive: true
+    username,
+    version: protocolVersion
   });
 
-  botState[id] = { bot, status: 'connecting' };
+  bots[id] = bot;
+  status[id] = 'connecting';
 
-  bot.on('spawn', () => {
-    console.log(`rentacraftX${id} spawned`);
-    botState[id].status = 'online';
+  bot.on('login', () => {
+    console.log(`Bot ${id} logged in`);
+    status[id] = 'online';
 
-    // safer login timing
     setTimeout(() => {
       try {
-        bot.chat(`/register ${PASSWORD} ${PASSWORD}`);
-        bot.chat(`/login ${PASSWORD}`);
+        bot.write('chat', { message: `/register ${PASSWORD}` });
+        bot.write('chat', { message: `/register ${PASSWORD} ${PASSWORD}` });
+        bot.write('chat', { message: `/login ${PASSWORD}` });
       } catch {}
     }, 3000);
   });
 
-  // Minecraft → Discord bridge (optional channel "mc-chat")
-  bot.on('chat', (username, message) => {
-    if (username === bot.username) return;
+  bot.on('chat', (packet) => {
+    const msg = packet.message?.toString?.() || '';
 
     const channel = client.channels.cache.find(c => c.name === 'mc-chat');
-    if (channel) {
-      channel.send(`⛏️ **${username}**: ${message}`);
-    }
+    if (channel) channel.send(`⛏️ ${msg}`);
   });
 
-  // clean disconnect handling
-  bot.on('end', () => {
-    console.log(`rentacraftX${id} disconnected`);
-    botState[id] = { bot: null, status: 'offline' };
-  });
-
-  bot.on('kicked', (reason) => {
-    console.log(`rentacraftX${id} kicked:`, reason);
-    botState[id] = { bot: null, status: 'offline' };
+  bot.on('disconnect', (packet) => {
+    console.log(`Bot ${id} disconnected`, packet);
+    bots[id] = null;
+    status[id] = 'offline';
   });
 
   bot.on('error', (err) => {
-    console.log(`rentacraftX${id} error:`, err);
+    console.log(`Bot ${id} error`, err);
+    bots[id] = null;
+    status[id] = 'offline';
   });
-
-  return bot;
 }
 
 // ─────────────────────────────
-// START BOTS (NO QUEUE, STATE CHECK)
+// START BOTS (SAFE STATE CHECK)
 // ─────────────────────────────
 function startBots(amount) {
   const count = Math.min(amount, MAX_BOTS);
 
   for (let i = 0; i < count; i++) {
-    const state = botState[i];
-
-    if (state?.bot && state.status === 'online') continue;
-
-    createBot(i);
+    if (!bots[i]) createBot(i);
   }
 
   return count;
 }
 
 // ─────────────────────────────
-// BROADCAST CHAT
+// BROADCAST
 // ─────────────────────────────
 function broadcast(message) {
-  for (const id in botState) {
-    const bot = botState[id].bot;
-    if (bot?.chat) bot.chat(message);
+  for (const id in bots) {
+    const bot = bots[id];
+    if (bot) {
+      try {
+        bot.write('chat', { message });
+      } catch {}
+    }
   }
 }
 
 // ─────────────────────────────
-// DISCORD COMMANDS
+// DISCORD READY
 // ─────────────────────────────
 client.once('ready', () => {
   console.log(`Logged in as ${client.user.tag}`);
 });
 
+// ─────────────────────────────
+// TEXT COMMANDS
+// ─────────────────────────────
 client.on('messageCreate', (msg) => {
   if (msg.author.bot) return;
 
-  const content = msg.content;
+  // PANEL
+  if (msg.content === '!mc panel') {
+    const embed = new EmbedBuilder()
+      .setTitle('MC CONTROL PANEL')
+      .setDescription(
+        Object.entries(status)
+          .map(([id, s]) => `Bot X${id}: ${s}`)
+          .join('\n')
+      )
+      .addFields({
+        name: 'Protocol',
+        value: protocolVersion
+      });
 
-  // START
-  if (content.startsWith('!mc start')) {
-    const amount = parseInt(content.split(' ')[2] || '1');
+    const row = new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId('start')
+        .setLabel('Start 3 Bots')
+        .setStyle(ButtonStyle.Success),
 
-    const started = startBots(amount);
+      new ButtonBuilder()
+        .setCustomId('stop')
+        .setLabel('Stop All')
+        .setStyle(ButtonStyle.Danger),
 
-    return msg.reply(`Ensuring ${started} bots are online.`);
+      new ButtonBuilder()
+        .setCustomId('refresh')
+        .setLabel('Refresh')
+        .setStyle(ButtonStyle.Primary)
+    );
+
+    return msg.reply({ embeds: [embed], components: [row] });
   }
 
   // CHAT
-  if (content.startsWith('!mc chat ')) {
-    const text = content.slice(10);
-    broadcast(text);
+  if (msg.content.startsWith('!mc chat ')) {
+    broadcast(msg.content.slice(10));
     return msg.reply('sent');
   }
 
   // STATUS
-  if (content === '!mc status') {
-    const status = Object.entries(botState)
-      .map(([id, b]) => `X${id}: ${b.status}`)
-      .join('\n');
-
-    return msg.reply(status);
+  if (msg.content === '!mc status') {
+    return msg.reply(
+      Object.entries(status)
+        .map(([id, s]) => `X${id}: ${s}`)
+        .join('\n')
+    );
   }
 
-  // STOP
-  if (content === '!mc stop') {
-    for (const id in botState) {
-      if (botState[id].bot) {
-        try { botState[id].bot.end(); } catch {}
-      }
-      botState[id] = { bot: null, status: 'offline' };
-    }
+  // START
+  if (msg.content.startsWith('!mc start')) {
+    const amount = parseInt(msg.content.split(' ')[2] || '1');
+    startBots(amount);
+    return msg.reply('starting bots');
+  }
+});
 
-    return msg.reply('stopped all bots');
+// ─────────────────────────────
+// BUTTONS
+// ─────────────────────────────
+client.on('interactionCreate', async (i) => {
+  if (!i.isButton()) return;
+
+  if (i.customId === 'start') {
+    startBots(3);
+    return i.reply({ content: 'started 3 bots', ephemeral: true });
+  }
+
+  if (i.customId === 'stop') {
+    for (const id in bots) {
+      try { bots[id]?.end?.(); } catch {}
+      bots[id] = null;
+      status[id] = 'offline';
+    }
+    return i.reply({ content: 'stopped all bots', ephemeral: true });
+  }
+
+  if (i.customId === 'refresh') {
+    return i.reply({
+      content: Object.entries(status)
+        .map(([id, s]) => `X${id}: ${s}`)
+        .join('\n'),
+      ephemeral: true
+    });
   }
 });
 
