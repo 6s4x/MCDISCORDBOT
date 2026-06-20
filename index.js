@@ -12,22 +12,23 @@ const client = new Client({
 let mcc = null;
 
 function startMCC() {
-
     if (mcc) return;
 
-    mcc = spawn('./MinecraftClient');
+    const fs = require('fs');
 
-    mcc.stdout.on('data', data => {
-        console.log(data.toString());
-    });
+    try {
+        fs.chmodSync('./MinecraftClient', 0o755);
+    } catch {}
 
-    mcc.stderr.on('data', data => {
-        console.log(data.toString());
-    });
+    mcc = require('child_process').spawn('bash', ['./MinecraftClient']);
 
-    mcc.on('close', code => {
-        console.log(`MCC exited (${code})`);
+    mcc.stdout.on('data', d => console.log('[MCC]', d.toString()));
+    mcc.stderr.on('data', d => console.log('[MCC ERR]', d.toString()));
+
+    mcc.on('close', c => {
+        console.log('MCC closed:', c);
         mcc = null;
+        setTimeout(startMCC, 5000);
     });
 }
 
