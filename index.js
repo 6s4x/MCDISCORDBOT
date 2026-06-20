@@ -17,9 +17,7 @@ const SERVER = {
 const PASSWORD = '#gxEcv#6dAz';
 const MAX_BOTS = 3;
 
-// ─────────────────────────────
-// BOT STATE STORE
-// ─────────────────────────────
+// STATE SYSTEM
 const botState = {
   0: { bot: null, status: 'offline' },
   1: { bot: null, status: 'offline' },
@@ -27,33 +25,40 @@ const botState = {
 };
 
 // ─────────────────────────────
-// CREATE BOT
+// CREATE BOT (STABLE VERSION)
 // ─────────────────────────────
 function createBot(id) {
-  if (botState[id]?.bot && botState[id].status === 'online') {
-    return;
-  }
+  if (botState[id]?.bot && botState[id].status === 'online') return;
 
   const bot = mineflayer.createBot({
     host: SERVER.host,
     port: SERVER.port,
-    username: `rentacraftX${id}_${Date.now()}`
+    username: `rentacraftX${id}_${Date.now()}`,
+
+    // 🔥 CRITICAL FIX FOR 1.21.5
+    version: '1.21.5',
+    auth: 'offline',
+
+    checkTimeoutInterval: 60000,
+    keepAlive: true
   });
 
   botState[id] = { bot, status: 'connecting' };
 
   bot.on('spawn', () => {
     console.log(`rentacraftX${id} spawned`);
-
     botState[id].status = 'online';
 
+    // safer login timing
     setTimeout(() => {
-      bot.chat(`/register ${PASSWORD}`);
-      bot.chat(`/register ${PASSWORD} ${PASSWORD}`);
-      bot.chat(`/login ${PASSWORD}`);
-    }, 2000);
+      try {
+        bot.chat(`/register ${PASSWORD} ${PASSWORD}`);
+        bot.chat(`/login ${PASSWORD}`);
+      } catch {}
+    }, 3000);
   });
 
+  // Minecraft → Discord bridge (optional channel "mc-chat")
   bot.on('chat', (username, message) => {
     if (username === bot.username) return;
 
@@ -63,27 +68,26 @@ function createBot(id) {
     }
   });
 
+  // clean disconnect handling
   bot.on('end', () => {
     console.log(`rentacraftX${id} disconnected`);
-
-    botState[id].bot = null;
-    botState[id].status = 'offline';
+    botState[id] = { bot: null, status: 'offline' };
   });
 
   bot.on('kicked', (reason) => {
     console.log(`rentacraftX${id} kicked:`, reason);
-
-    botState[id].bot = null;
-    botState[id].status = 'offline';
+    botState[id] = { bot: null, status: 'offline' };
   });
 
   bot.on('error', (err) => {
     console.log(`rentacraftX${id} error:`, err);
   });
+
+  return bot;
 }
 
 // ─────────────────────────────
-// START BOTS (STATE CHECK, NO QUEUE)
+// START BOTS (NO QUEUE, STATE CHECK)
 // ─────────────────────────────
 function startBots(amount) {
   const count = Math.min(amount, MAX_BOTS);
@@ -91,10 +95,7 @@ function startBots(amount) {
   for (let i = 0; i < count; i++) {
     const state = botState[i];
 
-    // already online → skip
-    if (state?.bot && state.status === 'online') {
-      continue;
-    }
+    if (state?.bot && state.status === 'online') continue;
 
     createBot(i);
   }
@@ -108,15 +109,12 @@ function startBots(amount) {
 function broadcast(message) {
   for (const id in botState) {
     const bot = botState[id].bot;
-
-    if (bot && bot.chat) {
-      bot.chat(message);
-    }
+    if (bot?.chat) bot.chat(message);
   }
 }
 
 // ─────────────────────────────
-// DISCORD EVENTS
+// DISCORD COMMANDS
 // ─────────────────────────────
 client.once('ready', () => {
   console.log(`Logged in as ${client.user.tag}`);
@@ -127,7 +125,7 @@ client.on('messageCreate', (msg) => {
 
   const content = msg.content;
 
-  // START BOTS
+  // START
   if (content.startsWith('!mc start')) {
     const amount = parseInt(content.split(' ')[2] || '1');
 
@@ -136,12 +134,10 @@ client.on('messageCreate', (msg) => {
     return msg.reply(`Ensuring ${started} bots are online.`);
   }
 
-  // CHAT TO MC
+  // CHAT
   if (content.startsWith('!mc chat ')) {
     const text = content.slice(10);
-
     broadcast(text);
-
     return msg.reply('sent');
   }
 
@@ -154,13 +150,13 @@ client.on('messageCreate', (msg) => {
     return msg.reply(status);
   }
 
-  // STOP ALL
+  // STOP
   if (content === '!mc stop') {
     for (const id in botState) {
       if (botState[id].bot) {
         try { botState[id].bot.end(); } catch {}
-        botState[id] = { bot: null, status: 'offline' };
       }
+      botState[id] = { bot: null, status: 'offline' };
     }
 
     return msg.reply('stopped all bots');
