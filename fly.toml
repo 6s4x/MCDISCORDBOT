@@ -14,11 +14,3 @@ app = "mcdiscordbot"
 
   [[services.ports]]
     port = 80
-
-[[vm]]
-  cpu_kind = 'shared'
-  cpus = 8
-  memory = '16gb'
-  memory_mb = 16384
-  processes = ['app']
-  size = 'shared-cpu-8x'
