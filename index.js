@@ -10,17 +10,51 @@ const client = new Client({
 });
 
 const SERVER = {
-  host: '89.144.32.248',
+  host: '89.144.248.248',
   port: 1033
 };
 
 const PASSWORD = '#gxEcv#6dAz';
 
-const TARGET_BOTS = new Map();   // desired count
-const ACTIVE_BOTS = new Map();   // running bots
+// ─────────────────────────────
+// SWARM STATE
+// ─────────────────────────────
+const bots = new Map();        // id -> bot
+const status = new Map();      // id -> online/offline
+
+let targetSize = 0;
+
+// adaptive throttle control
+let spawnDelay = 2000; // starts safe
+const MIN_DELAY = 800;
+const MAX_DELAY = 15000;
+
+// queue system
+const spawnQueue = [];
+let spawning = false;
 
 // ─────────────────────────────
-// CREATE BOT (SAFE JOIN)
+// UTIL
+// ─────────────────────────────
+function sleep(ms) {
+  return new Promise(r => setTimeout(r, ms));
+}
+
+// ─────────────────────────────
+// ADAPTIVE SPEED CONTROL
+// ─────────────────────────────
+function adjustSpeed(success) {
+  if (success) {
+    spawnDelay = Math.max(MIN_DELAY, spawnDelay - 150);
+  } else {
+    spawnDelay = Math.min(MAX_DELAY, spawnDelay + 1000);
+  }
+
+  console.log(`[SWARM] spawnDelay = ${spawnDelay}ms`);
+}
+
+// ─────────────────────────────
+// BOT CREATION
 // ─────────────────────────────
 function createBot(id) {
   const bot = mineflayer.createBot({
@@ -30,14 +64,20 @@ function createBot(id) {
     version: false
   });
 
-  ACTIVE_BOTS.set(id, bot);
+  bots.set(id, bot);
+  status.set(id, 'connecting');
 
   bot.once('login', () => {
-    console.log(`X${id} joined`);
+    status.set(id, 'online');
+    adjustSpeed(true);
+
+    console.log(`✔ Bot ${id} joined`);
 
     setTimeout(() => {
-      bot.chat(`/register ${PASSWORD} ${PASSWORD}`);
-      bot.chat(`/login ${PASSWORD}`);
+      try {
+        bot.chat(`/register ${PASSWORD} ${PASSWORD}`);
+        bot.chat(`/login ${PASSWORD}`);
+      } catch {}
     }, 2500);
   });
 
@@ -46,27 +86,65 @@ function createBot(id) {
 }
 
 // ─────────────────────────────
-// AUTO REPLACE DEAD BOT
+// DEATH HANDLER
 // ─────────────────────────────
 function handleDeath(id) {
-  ACTIVE_BOTS.delete(id);
+  bots.delete(id);
+  status.set(id, 'offline');
 
-  if (TARGET_BOTS.has(id)) {
-    // respawn instantly BUT only ONE at a time
-    setTimeout(() => createBot(id), 2000);
+  adjustSpeed(false);
+
+  // auto replace ONLY if still needed
+  if (id < targetSize) {
+    queueSpawn(id);
   }
 }
 
 // ─────────────────────────────
-// SWARM CONTROLLER
+// SAFE QUEUE SYSTEM
 // ─────────────────────────────
-function setSwarmSize(size) {
-  for (let i = 0; i < size; i++) {
-    TARGET_BOTS.set(i, true);
+function queueSpawn(id) {
+  if (spawnQueue.includes(id)) return;
+  spawnQueue.push(id);
+  processQueue();
+}
 
-    if (!ACTIVE_BOTS.has(i)) {
-      setTimeout(() => createBot(i), i * 1500); // controlled stagger
+async function processQueue() {
+  if (spawning) return;
+  spawning = true;
+
+  while (spawnQueue.length > 0) {
+    const id = spawnQueue.shift();
+
+    createBot(id);
+
+    await sleep(spawnDelay);
+  }
+
+  spawning = false;
+}
+
+// ─────────────────────────────
+// START SWARM
+// ─────────────────────────────
+function startSwarm(size) {
+  targetSize = size;
+
+  for (let i = 0; i < size; i++) {
+    if (!bots.has(i)) {
+      queueSpawn(i);
     }
+  }
+}
+
+// ─────────────────────────────
+// CHAT ALL BOTS
+// ─────────────────────────────
+function broadcast(msg) {
+  for (const bot of bots.values()) {
+    try {
+      bot.chat(msg);
+    } catch {}
   }
 }
 
@@ -74,33 +152,42 @@ function setSwarmSize(size) {
 // DISCORD
 // ─────────────────────────────
 client.once('ready', () => {
-  console.log('ready');
+  console.log('SMART SWARM V3 ONLINE');
 });
 
-client.on('messageCreate', msg => {
+client.on('messageCreate', async (msg) => {
   if (msg.author.bot) return;
 
   if (msg.content.startsWith('!mc start')) {
-    const n = parseInt(msg.content.split(' ')[2] || '3');
-
-    setSwarmSize(n);
-    return msg.reply(`swarm set to ${n}`);
-  }
-
-  if (msg.content === '!mc status') {
-    return msg.reply(
-      `online: ${ACTIVE_BOTS.size} / target: ${TARGET_BOTS.size}`
-    );
+    const n = parseInt(msg.content.split(' ')[2] || '1');
+    startSwarm(n);
+    return msg.reply(`swarm target set: ${n}`);
   }
 
   if (msg.content.startsWith('!mc chat ')) {
-    const text = msg.content.slice(9);
+    broadcast(msg.content.slice(9));
+    return msg.reply('sent');
+  }
 
-    for (const bot of ACTIVE_BOTS.values()) {
-      try { bot.chat(text); } catch {}
+  if (msg.content === '!mc status') {
+    const lines = [...status.entries()]
+      .map(([id, s]) => `X${id}: ${s}`)
+      .join('\n') || 'none';
+
+    return msg.reply(`\`\`\`\n${lines}\n\`\`\``);
+  }
+
+  if (msg.content === '!mc stop') {
+    for (const b of bots.values()) {
+      try { b.end(); } catch {}
     }
 
-    return msg.reply('sent');
+    bots.clear();
+    status.clear();
+    spawnQueue.length = 0;
+    targetSize = 0;
+
+    return msg.reply('stopped swarm');
   }
 });
 
