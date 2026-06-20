@@ -9,39 +9,43 @@ const client = new Client({
   ]
 });
 
-const bots = new Map(); // id -> bot instance
-
 const SERVER = {
   host: '89.144.32.248',
   port: 1033
 };
 
 const PASSWORD = '#gxEcv#6dAz';
-const MAX_BOTS = 6;
+const MAX_BOTS = 3;
 
-// ─────────────────────────────────────────────
-// UTIL: backoff reconnect (no spam)
-// ─────────────────────────────────────────────
-function backoffTime(attempt) {
-  return Math.min(30000, 2000 * Math.pow(2, attempt));
-}
+// ─────────────────────────────
+// BOT STATE STORE
+// ─────────────────────────────
+const botState = {
+  0: { bot: null, status: 'offline' },
+  1: { bot: null, status: 'offline' },
+  2: { bot: null, status: 'offline' }
+};
 
-// ─────────────────────────────────────────────
+// ─────────────────────────────
 // CREATE BOT
-// ─────────────────────────────────────────────
-function createBot(id, attempt = 0) {
-  const username = `rentacraftX${id}`;
+// ─────────────────────────────
+function createBot(id) {
+  if (botState[id]?.bot && botState[id].status === 'online') {
+    return;
+  }
 
   const bot = mineflayer.createBot({
     host: SERVER.host,
     port: SERVER.port,
-    username
+    username: `rentacraftX${id}_${Date.now()}`
   });
 
-  bots.set(id, { bot, attempt });
+  botState[id] = { bot, status: 'connecting' };
 
   bot.on('spawn', () => {
-    console.log(`${username} spawned`);
+    console.log(`rentacraftX${id} spawned`);
+
+    botState[id].status = 'online';
 
     setTimeout(() => {
       bot.chat(`/register ${PASSWORD}`);
@@ -50,104 +54,120 @@ function createBot(id, attempt = 0) {
     }, 2000);
   });
 
-  // ───────────── Minecraft → Discord ─────────────
   bot.on('chat', (username, message) => {
     if (username === bot.username) return;
 
-    const channel = client.channels.cache.find(c => c?.name === 'mc-chat');
-    if (channel) channel.send(`⛏️ **${username}**: ${message}`);
-  });
-
-  // ───────────── ERROR HANDLING ─────────────
-  bot.on('kicked', (reason) => {
-    console.log(`${username} kicked:`, reason);
-  });
-
-  bot.on('error', (err) => {
-    console.log(`${username} error:`, err);
+    const channel = client.channels.cache.find(c => c.name === 'mc-chat');
+    if (channel) {
+      channel.send(`⛏️ **${username}**: ${message}`);
+    }
   });
 
   bot.on('end', () => {
-    console.log(`${username} disconnected`);
+    console.log(`rentacraftX${id} disconnected`);
 
-    const data = bots.get(id);
-    const nextAttempt = (data?.attempt || 0) + 1;
-
-    const delay = backoffTime(nextAttempt);
-
-    console.log(`Reconnecting ${username} in ${delay}ms`);
-
-    setTimeout(() => {
-      createBot(id, nextAttempt);
-    }, delay);
+    botState[id].bot = null;
+    botState[id].status = 'offline';
   });
 
-  return bot;
+  bot.on('kicked', (reason) => {
+    console.log(`rentacraftX${id} kicked:`, reason);
+
+    botState[id].bot = null;
+    botState[id].status = 'offline';
+  });
+
+  bot.on('error', (err) => {
+    console.log(`rentacraftX${id} error:`, err);
+  });
 }
 
-// ─────────────────────────────────────────────
-// START BOTS (NO QUEUE, BUT SAFE DELAY)
-// ─────────────────────────────────────────────
-async function startBots(amount) {
+// ─────────────────────────────
+// START BOTS (STATE CHECK, NO QUEUE)
+// ─────────────────────────────
+function startBots(amount) {
   const count = Math.min(amount, MAX_BOTS);
 
-  bots.clear();
-
   for (let i = 0; i < count; i++) {
-    setTimeout(() => {
-      createBot(i);
-    }, i * 5000); // prevents throttling WITHOUT queue system
+    const state = botState[i];
+
+    // already online → skip
+    if (state?.bot && state.status === 'online') {
+      continue;
+    }
+
+    createBot(i);
   }
 
   return count;
 }
 
-// ─────────────────────────────────────────────
-// BROADCAST
-// ─────────────────────────────────────────────
+// ─────────────────────────────
+// BROADCAST CHAT
+// ─────────────────────────────
 function broadcast(message) {
-  for (const { bot } of bots.values()) {
-    if (bot?.chat) bot.chat(message);
+  for (const id in botState) {
+    const bot = botState[id].bot;
+
+    if (bot && bot.chat) {
+      bot.chat(message);
+    }
   }
 }
 
-// ─────────────────────────────────────────────
-// DISCORD BOT
-// ─────────────────────────────────────────────
+// ─────────────────────────────
+// DISCORD EVENTS
+// ─────────────────────────────
 client.once('ready', () => {
   console.log(`Logged in as ${client.user.tag}`);
 });
 
-client.on('messageCreate', async (msg) => {
+client.on('messageCreate', (msg) => {
   if (msg.author.bot) return;
 
-  // START
-  if (msg.content.startsWith('!mc start')) {
-    const amount = parseInt(msg.content.split(' ')[2] || '1');
+  const content = msg.content;
 
-    const started = await startBots(amount);
+  // START BOTS
+  if (content.startsWith('!mc start')) {
+    const amount = parseInt(content.split(' ')[2] || '1');
 
-    return msg.reply(`Started ${started} bots.`);
+    const started = startBots(amount);
+
+    return msg.reply(`Ensuring ${started} bots are online.`);
   }
 
-  // CHAT → MC
-  if (msg.content.startsWith('!mc chat ')) {
-    const text = msg.content.slice(10);
+  // CHAT TO MC
+  if (content.startsWith('!mc chat ')) {
+    const text = content.slice(10);
+
     broadcast(text);
 
     return msg.reply('sent');
   }
 
-  // STOP
-  if (msg.content === '!mc stop') {
-    for (const { bot } of bots.values()) {
-      try { bot.end(); } catch {}
-    }
+  // STATUS
+  if (content === '!mc status') {
+    const status = Object.entries(botState)
+      .map(([id, b]) => `X${id}: ${b.status}`)
+      .join('\n');
 
-    bots.clear();
+    return msg.reply(status);
+  }
+
+  // STOP ALL
+  if (content === '!mc stop') {
+    for (const id in botState) {
+      if (botState[id].bot) {
+        try { botState[id].bot.end(); } catch {}
+        botState[id] = { bot: null, status: 'offline' };
+      }
+    }
 
     return msg.reply('stopped all bots');
   }
 });
 
+// ─────────────────────────────
+// LOGIN
+// ─────────────────────────────
 client.login(process.env.TOKEN);
