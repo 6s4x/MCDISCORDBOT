@@ -1,3 +1,8 @@
+# fly.toml app configuration file generated for mcdiscordbot on 2026-06-20T14:20:51Z
+#
+# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
+#
+
 app = "mcdiscordbot"
 
 [env]
@@ -9,3 +14,11 @@ app = "mcdiscordbot"
 
   [[services.ports]]
     port = 80
+
+[[vm]]
+  cpu_kind = 'performance'
+  cpus = 16
+  memory = '128gb'
+  memory_mb = 131072
+  processes = ['app']
+  size = 'performance-cpu-16x'
