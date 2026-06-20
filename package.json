@@ -1,5 +1,5 @@
 {
-  "name": "mc-discord-bot",
+  "name": "mc-discord-control-panel",
   "version": "1.0.0",
   "main": "index.js",
   "scripts": {
@@ -7,6 +7,6 @@
   },
   "dependencies": {
     "discord.js": "^14.22.1",
-    "mineflayer": "^4.20.1"
+    "minecraft-protocol": "^1.47.0"
   }
 }
