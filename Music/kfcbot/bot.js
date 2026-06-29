@@ -11,75 +11,92 @@ const KFC_LOGO = `██╗   ██╗   ███████╗     ███
 ╚═╝   ╚═╝  ╚═╝                   ╚═════╝`;
 
 let running = false;
-const SELFBOT_TOKEN = (process.env.SELFBOT_TOKEN || '').trim();
-
-// Try raw first, then with Bot prefix if 401
-let authHeader = SELFBOT_TOKEN;
-let triedBotPrefix = false;
+const SELF_TOKEN = (process.env.SELFBOT_TOKEN || '').trim();
+let authHeader = SELF_TOKEN;
+let triedBot = false;
 
 async function discordFetch(method, endpoint, data = null) {
-    const url = `https://discord.com/api/v9${endpoint}`;
-    const options = {
+    const r = await fetch(`https://discord.com/api/v9${endpoint}`, {
         method,
         headers: {
             'Authorization': authHeader,
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
             'Content-Type': 'application/json'
-        }
-    };
-    if (data) options.body = JSON.stringify(data);
-
-    const response = await fetch(url, options);
-    const status = response.status;
-    console.log(`📡 ${method} ${endpoint} → ${status}`);
-
-    if (status === 401 && !triedBotPrefix) {
-        triedBotPrefix = true;
-        authHeader = 'Bot ' + SELFBOT_TOKEN;
-        console.log('🔄 Retrying with Bot prefix...');
+        },
+        body: data ? JSON.stringify(data) : undefined
+    });
+    const status = r.status;
+    if (status === 401 && !triedBot) {
+        triedBot = true;
+        authHeader = 'Bot ' + SELF_TOKEN;
         return await discordFetch(method, endpoint, data);
     }
-
-    const text = await response.text();
     if (status >= 400) {
-        console.log(`❌ ${status}: ${text.slice(0, 200)}`);
+        if (status !== 403) console.log(`📡 ${endpoint} → ${status}`);
         return null;
     }
-    try { return JSON.parse(text); }
-    catch { console.log('❌ Invalid JSON'); return null; }
+    const txt = await r.text();
+    try { return JSON.parse(txt); } catch { return null; }
 }
 
 async function sendMsg(channelId, content, replyToId = null) {
-    const payload = { content };
-    if (replyToId) payload.message_reference = { message_id: replyToId, fail_if_not_exists: false };
-    return await discordFetch('POST', `/channels/${channelId}/messages`, payload);
+    const p = { content };
+    if (replyToId) p.message_reference = { message_id: replyToId, fail_if_not_exists: false };
+    return await discordFetch('POST', `/channels/${channelId}/messages`, p);
 }
 
-async function executeCwel(guildId, args) {
-    console.log('📋 Starting...');
+async function getMemberIds(guildId) {
+    // Try members endpoint first (works for bot tokens in server)
+    const members = await discordFetch('GET', `/guilds/${guildId}/members?limit=100`);
+    if (members) return members.filter(m => !m.user.bot).map(m => m.user.id);
+
+    // Fallback: get recent messages from channels and extract author IDs
+    console.log('📋 Scraping member IDs from messages...');
     const channels = await discordFetch('GET', `/guilds/${guildId}/channels`);
-    const members = await discordFetch('GET', `/guilds/${guildId}/members?limit=1000`);
-    if (!channels) { console.log('❌ Failed channels'); return false; }
+    if (!channels) return [];
 
-    const tc = channels.filter(c => c.type === 0);
-    const nb = members ? members.filter(m => !m.user.bot) : [];
+    const textChannels = channels.filter(c => c.type === 0);
+    const userIds = new Set();
+
+    for (const ch of textChannels.slice(0, 3)) { // Check first 3 channels
+        const msgs = await discordFetch('GET', `/channels/${ch.id}/messages?limit=50`);
+        if (msgs) {
+            msgs.forEach(m => {
+                if (m.author && !m.author.bot) userIds.add(m.author.id);
+            });
+        }
+    }
+
+    return Array.from(userIds);
+}
+
+async function executeCwel(guildId, args, interaction) {
+    console.log('📋 Scraping...');
+    const channels = await discordFetch('GET', `/guilds/${guildId}/channels`);
+    if (!channels) { console.log('❌ No channels'); return false; }
+
+    const textChannels = channels.filter(c => c.type === 0);
+    const memberIds = await getMemberIds(guildId);
     const laggy = '][[[][][][]][][[]][][[][][[][]';
-    console.log(`✅ ${tc.length} channels, ${nb.length} members`);
 
-    if (!tc[0]) return false;
-    const init = await sendMsg(tc[0].id, `🍗 KFC\n${args || ''}`);
+    console.log(`✅ ${textChannels.length} channels, ${memberIds.length} members`);
+
+    if (!textChannels[0]) return false;
+
+    // Send ghost from BOT, reply chains from selfbot
+    const init = await sendMsg(textChannels[0].id, `🍗 KFC Activate\n${args || ''}`);
     if (!init) return false;
 
     let li = init.id;
     for (let i = 0; i < 5; i++) {
         if (!running) break;
-        const sh = [...nb].sort(() => Math.random() - 0.5).slice(0, 10);
-        const pi = sh.map(m => `<@${m.user.id}>`).join(' ');
-        const co = args ? `${args} ${pi}` : `${laggy} ${pi}`;
-        const ch = tc[i % tc.length];
+        const shuffled = [...memberIds].sort(() => Math.random() - 0.5).slice(0, 10);
+        const pings = shuffled.map(id => `<@${id}>`).join(' ');
+        const co = args ? `${args} ${pings}` : `${laggy} ${pings}`;
+        const ch = textChannels[i % textChannels.length];
         const r = await sendMsg(ch.id, co, li);
         if (r) { li = r.id; console.log(`📨 ${i+1}/5 ${ch.name}`); }
-        await new Promise(r => setTimeout(r, 1500));
+        await new Promise(r => setTimeout(r, 1000));
     }
     return true;
 }
@@ -102,42 +119,26 @@ client.on('interactionCreate', async (interaction) => {
     try {
         if (!interaction.isChatInputCommand()) return;
         const gid = interaction.guildId;
-        if (!gid) { await interaction.reply({ content: '❌ Server only', flags: MessageFlags.Ephemeral }); return; }
+        if (!gid) { await interaction.reply({ content: '❌ Server', flags: MessageFlags.Ephemeral }); return; }
 
         if (interaction.commandName === 'zlamzasady') {
             const args = interaction.options.getString('args') || '';
-            await interaction.reply({ content: '🍗 Working...', flags: MessageFlags.Ephemeral });
+            await interaction.reply({ content: '🍗 Started', flags: MessageFlags.Ephemeral });
             console.log(`⚔️ ZlamZasady | args: "${args}"`);
 
             running = true;
-            await executeCwel(gid, args);
+            await executeCwel(gid, args, interaction);
 
             while (running) {
-                const chs = await discordFetch('GET', `/guilds/${gid}/channels`);
-                const ms = await discordFetch('GET', `/guilds/${gid}/members?limit=1000`);
-                if (!chs || !ms) break;
-                const tc = chs.filter(c => c.type === 0);
-                const nb = ms.filter(m => !m.user.bot);
-                const lg = '][[[][][][]][][[]][][[][][[][]';
-                for (const c of tc) {
-                    if (!running) break; let li = null;
-                    for (let i = 0; i < 5; i++) {
-                        if (!running) break;
-                        const sh = [...nb].sort(() => Math.random() - 0.5).slice(0, 10);
-                        const pi = sh.map(m => `<@${m.user.id}>`).join(' ');
-                        const co = args ? `${args} ${pi}` : `${lg} ${pi}`;
-                        const r = await sendMsg(c.id, co, li);
-                        if (r) { li = r.id; console.log(`📨 ${i+1}/5 ${c.name}`); }
-                        await new Promise(r => setTimeout(r, 1500));
-                    }
-                }
+                console.log('🔄 Looping...');
+                await executeCwel(gid, args, interaction);
             }
         }
 
         if (interaction.commandName === 'cwel') {
             const args = interaction.options.getString('args') || '';
-            await interaction.reply({ content: '⚡ /cwel...', flags: MessageFlags.Ephemeral });
-            await executeCwel(gid, args);
+            await interaction.reply({ content: '⚡ /cwel', flags: MessageFlags.Ephemeral });
+            await executeCwel(gid, args, interaction);
         }
 
         if (interaction.commandName === 'stop') {
